@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template AuroraServerlessDBCluster: Sample template
+  showing how to create an Amazon Aurora Serverless DB cluster. **WARNING** This
+  template creates an Amazon Aurora DB cluster. You will be billed for the AWS
+  resources used if you create a stack from this template.
+Metadata:
+  AWS::CloudFormation::Interface:
+
+    ParameterGroups:
+      - Label:
+          default: DB Details
+        Parameters:
+          - DBUsername
+          - DBPassword
+          - SecurityGroup
+      - Label:
+          default: Network Details
+        Parameters:
+          - VPC
+          - SubnetGroup
+
+    ParameterLabels:
+      DBUsername:
+        default: Username
+      DBPassword:
+        default: Password
+      SecurityGroup:
+        default: Cloud 9 or app security group
+      SubnetGroup:
+        default: Subnet group for both RDS and Elasticache
+
+Parameters:
+  DBUsername:
+    Description: Username for SQL database access
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: Password SQL database access
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+
+  SecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup::Id'
+    
+  VPC:
+    Type: 'AWS::EC2::VPC::Id'
+  
+  SubnetGroup:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+
+Resources:
+
+# RDS
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Sg for DB instance
+      VpcId: !Ref VPC
+
+  SgDbIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !GetAtt DbSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref SecurityGroup    
+  
+  DbMySqlSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties: 
+      DBSubnetGroupDescription: Subnet group for demo RDS DB instances
+      SubnetIds: !Ref SubnetGroup
+
+  RDSCluster:
+    Type: 'AWS::RDS::DBCluster'
+    DeletionPolicy: Delete
+    Properties:
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBClusterIdentifier: demo-mysql
+      Engine: aurora-mysql
+      EngineVersion: "5.7.mysql_aurora.2.07.1 "
+      EngineMode: serverless
+      ScalingConfiguration:
+        AutoPause: true
+        MinCapacity: 2
+        MaxCapacity: 4
+        SecondsUntilAutoPause: 1800
+      DBSubnetGroupName: !Ref DbMySqlSubnetGroup
+      VpcSecurityGroupIds:
+        - !GetAtt DbSecurityGroup.GroupId
+        
+# Elasticache 
+        
+  ElcRedisSubnetGroup:      
+    Type: 'AWS::ElastiCache::SubnetGroup'
+    Properties: 
+      Description: Subnet group for demo Redis nodes
+      SubnetIds: !Ref SubnetGroup
+      
+  ElcSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Sg for elc instance
+      VpcId: !Ref VPC
+          
+  ElcDbIngress:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !GetAtt ElcSecurityGroup.GroupId
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+      SourceSecurityGroupId: !Ref SecurityGroup 
+      
+  RedisReplicationGroup:
+    Type: 'AWS::ElastiCache::ReplicationGroup'
+    Properties:
+      ReplicationGroupDescription: Redis cluster
+      NumCacheClusters: '2'
+      Engine: 'redis'
+      CacheNodeType: 'cache.t3.medium'
+      AutoMinorVersionUpgrade: true
+      AutomaticFailoverEnabled: true
+      MultiAZEnabled: true
+      CacheSubnetGroupName: !Ref ElcRedisSubnetGroup
+      EngineVersion: '6.x'
+      SecurityGroupIds:
+        - !GetAtt ElcSecurityGroup.GroupId
+        
+
+Outputs:
+
+  DbUrl:
+    Description: Url to Postgres database
+    Value: !GetAtt RDSCluster.Endpoint.Address
+
+  DbPort:
+    Description: Port of Database
+    Value: !GetAtt RDSCluster.Endpoint.Port
+    
+  ElcUrl:
+    Description: Url to Redis primary
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+    
+  ElcPort:
+    Description: Port to Redis primary
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
