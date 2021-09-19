@@ -9,9 +9,9 @@ Metadata:
 
     ParameterGroups:
       - Label:
-          default: DB Details
+          default: Elasticsearch Details
         Parameters:
-          - DBUsername
+          - DomainName
           - DBPassword
           - SecurityGroup
       - Label:
@@ -21,8 +21,8 @@ Metadata:
           - SubnetGroup
 
     ParameterLabels:
-      DBUsername:
-        default: Username
+      DomainName:
+        default: test
       DBPassword:
         default: Password
       SecurityGroup:
@@ -31,8 +31,8 @@ Metadata:
         default: Subnet group for both RDS and Elasticache
 
 Parameters:
-  DBUsername:
-    Description: Username for SQL database access
+  DomainName:
+    Description: Domain name for Elasticsearch
     Type: String
     MinLength: '1'
     MaxLength: '16'
@@ -57,87 +57,50 @@ Parameters:
     Type: 'List<AWS::EC2::Subnet::Id>'
 
 Resources:
-
-# RDS
-
-  DbSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
+  deliverystream:
+    DependsOn:
+      - deliveryPolicy
+    Type: AWS::KinesisFirehose::DeliveryStream
     Properties:
-      GroupDescription: Sg for DB instance
-      VpcId: !Ref VPC
-
-  SgDbIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !Join 
+          - ''
+          - - 'arn:aws:s3:::'
+            - !Ref s3bucket
+        BufferingHints:
+          IntervalInSeconds: '60'
+          SizeInMBs: '50'
+        CompressionFormat: UNCOMPRESSED
+        Prefix: firehose/
+        RoleARN: !GetAtt deliveryRole.Arn
+        ProcessingConfiguration:
+          Enabled: 'true'
+          Processors:
+            - Parameters:
+                - ParameterName: LambdaArn
+                  ParameterValue: !GetAtt myLambda.Arn 
+              Type: Lambda 
+              
+  s3bucket:
+    Type: AWS::S3::Bucket
     Properties:
-      GroupId: !GetAtt DbSecurityGroup.GroupId
-      IpProtocol: tcp
-      FromPort: 3306
-      ToPort: 3306
-      SourceSecurityGroupId: !Ref SecurityGroup    
-  
-  DbMySqlSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties: 
-      DBSubnetGroupDescription: Subnet group for demo RDS DB instances
-      SubnetIds: !Ref SubnetGroup
-
-  RDSCluster:
-    Type: 'AWS::RDS::DBCluster'
-    DeletionPolicy: Delete
-    Properties:
-      MasterUsername: !Ref DBUsername
-      MasterUserPassword: !Ref DBPassword
-      DBClusterIdentifier: demo-mysql
-      Engine: aurora-mysql
-      EngineVersion: "5.7.mysql_aurora.2.07.1 "
-      EngineMode: serverless
-      ScalingConfiguration:
-        AutoPause: true
-        MinCapacity: 2
-        MaxCapacity: 4
-        SecondsUntilAutoPause: 1800
-      DBSubnetGroupName: !Ref DbMySqlSubnetGroup
-      VpcSecurityGroupIds:
-        - !GetAtt DbSecurityGroup.GroupId
+      VersioningConfiguration:
+        Status: Enabled
         
-# Elasticache 
-        
-  ElcRedisSubnetGroup:      
-    Type: 'AWS::ElastiCache::SubnetGroup'
-    Properties: 
-      Description: Subnet group for demo Redis nodes
-      SubnetIds: !Ref SubnetGroup
-      
-  ElcSecurityGroup:
-    Type: 'AWS::EC2::SecurityGroup'
+  deliveryRole:
+    Type: AWS::IAM::Role
     Properties:
-      GroupDescription: Sg for elc instance
-      VpcId: !Ref VPC
-          
-  ElcDbIngress:
-    Type: 'AWS::EC2::SecurityGroupIngress'
-    Properties:
-      GroupId: !GetAtt ElcSecurityGroup.GroupId
-      IpProtocol: tcp
-      FromPort: 6379
-      ToPort: 6379
-      SourceSecurityGroupId: !Ref SecurityGroup 
-      
-  RedisReplicationGroup:
-    Type: 'AWS::ElastiCache::ReplicationGroup'
-    Properties:
-      ReplicationGroupDescription: Redis cluster
-      NumCacheClusters: '2'
-      Engine: 'redis'
-      CacheNodeType: 'cache.t3.medium'
-      AutoMinorVersionUpgrade: true
-      AutomaticFailoverEnabled: true
-      MultiAZEnabled: true
-      CacheSubnetGroupName: !Ref ElcRedisSubnetGroup
-      EngineVersion: '6.x'
-      SecurityGroupIds:
-        - !GetAtt ElcSecurityGroup.GroupId
-        
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref 'AWS::AccountId'
 
 Outputs:
 
